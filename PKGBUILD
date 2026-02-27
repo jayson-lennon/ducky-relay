@@ -1,8 +1,8 @@
 # Maintainer: Jayson Lennon <jayson@jaysonlennon.dev>
 
 pkgname=duckycap
-pkgver=0.1.0
-pkgrel=8
+pkgver=0.2.0
+pkgrel=1
 pkgdesc='capture duckypad input and relay it to another application'
 url=''
 license=(GPL-3.0-only)
