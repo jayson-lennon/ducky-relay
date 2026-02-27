@@ -84,10 +84,7 @@ impl Config {
 
 /// Parse a key combination string into a normalized vector of keys
 fn parse_key_combination(input: &str) -> Vec<String> {
-    let mut keys: Vec<String> = input
-        .split('+')
-        .map(|s| s.trim().to_lowercase())
-        .collect();
+    let mut keys: Vec<String> = input.split('+').map(|s| s.trim().to_lowercase()).collect();
     keys.sort();
     keys
 }
@@ -102,10 +99,11 @@ fn execute_as_user(user: &str, script_path: &PathBuf) -> Result<(), String> {
 
     let status = Command::new("runuser")
         .args([
-            "-u", user,
+            "-u",
+            user,
             "--",
             "/bin/bash",
-            "-l",  // Login shell - loads user's profile
+            "-l", // Login shell - loads user's profile
             "-c",
             // Use exec "$0" pattern to safely pass script path as $0,
             // avoiding shell interpretation of special characters in the path
@@ -184,7 +182,6 @@ pub async fn run_server(user: String, commands: HashMap<Vec<String>, PathBuf>) {
 // ============================================================================
 
 struct KeystrokeService {
-    keystroke_count: u64,
     user: String,
     commands: HashMap<Vec<String>, PathBuf>,
     /// Track last trigger time for each key combination (debounce)
@@ -196,7 +193,6 @@ struct KeystrokeService {
 impl KeystrokeService {
     fn new(user: String, commands: HashMap<Vec<String>, PathBuf>) -> Self {
         Self {
-            keystroke_count: 0,
             user,
             commands,
             last_triggered: HashMap::new(),
@@ -207,7 +203,11 @@ impl KeystrokeService {
 #[service(interface = "io.ducky.Keystroke")]
 impl KeystrokeService {
     #[allow(clippy::unused_async)]
-    async fn send_keys(&mut self, keys: Vec<String>, pressed: bool) -> Result<SendKeysResponse, KeystrokeError> {
+    async fn send_keys(
+        &mut self,
+        keys: Vec<String>,
+        pressed: bool,
+    ) -> Result<SendKeysResponse, KeystrokeError> {
         let keys: Vec<String> = keys.into_iter().filter(|k| !k.trim().is_empty()).collect();
 
         if keys.is_empty() {
@@ -220,16 +220,18 @@ impl KeystrokeService {
         let mut normalized: Vec<String> = keys.iter().map(|k| k.to_lowercase()).collect();
         normalized.sort();
 
-        self.keystroke_count += 1;
         println!(
-            "Received key combination #{}: {:?} (pressed={})",
-            self.keystroke_count, normalized, pressed
+            "Received key combination: {:?} (pressed={})",
+            normalized, pressed
         );
 
         // The duckyPad sends continuous press/release events even when key is held,
         // so we ignore release events and use time-based debouncing for presses
         if !pressed {
-            println!("Ignoring key release event (spurious from duckyPad): {:?}", normalized);
+            println!(
+                "Ignoring key release event (spurious from duckyPad): {:?}",
+                normalized
+            );
             return Ok(SendKeysResponse {
                 success: true,
                 keys: normalized,
@@ -241,18 +243,23 @@ impl KeystrokeService {
         let now = Instant::now();
 
         // Clean up stale debounce entries (older than DEBOUNCE_DURATION)
-        self.last_triggered.retain(|_, last_time| {
-            now.duration_since(*last_time) < DEBOUNCE_DURATION
-        });
+        self.last_triggered
+            .retain(|_, last_time| now.duration_since(*last_time) < DEBOUNCE_DURATION);
 
         let should_trigger = match self.last_triggered.get(&normalized) {
             Some(last_time) => {
                 let elapsed = now.duration_since(*last_time);
                 if elapsed >= DEBOUNCE_DURATION {
-                    println!("Debounce window passed ({:?} >= {:?}), allowing trigger", elapsed, DEBOUNCE_DURATION);
+                    println!(
+                        "Debounce window passed ({:?} >= {:?}), allowing trigger",
+                        elapsed, DEBOUNCE_DURATION
+                    );
                     true
                 } else {
-                    println!("Ignoring key press within debounce window ({:?} < {:?}): {:?}", elapsed, DEBOUNCE_DURATION, normalized);
+                    println!(
+                        "Ignoring key press within debounce window ({:?} < {:?}): {:?}",
+                        elapsed, DEBOUNCE_DURATION, normalized
+                    );
                     false
                 }
             }
@@ -262,6 +269,10 @@ impl KeystrokeService {
             }
         };
 
+        // Always update the timer on every press - this resets the debounce window
+        // so holding a key won't trigger again until 500ms after the last press
+        self.last_triggered.insert(normalized.clone(), now);
+
         if !should_trigger {
             return Ok(SendKeysResponse {
                 success: true,
@@ -269,9 +280,6 @@ impl KeystrokeService {
                 pressed: false, // Indicates no action taken due to debounce
             });
         }
-
-        // Update last triggered time
-        self.last_triggered.insert(normalized.clone(), now);
 
         // Look up and execute command if found
         if let Some(script_path) = self.commands.get(&normalized) {
@@ -284,8 +292,17 @@ impl KeystrokeService {
             // Spawn command in background to avoid blocking
             tokio::spawn(async move {
                 match execute_as_user(&user, &path) {
-                    Ok(()) => println!("Command '{}' completed successfully for keys [{}]", path.display(), key_desc),
-                    Err(e) => eprintln!("Command '{}' failed for keys [{}]: {}", path.display(), key_desc, e),
+                    Ok(()) => println!(
+                        "Command '{}' completed successfully for keys [{}]",
+                        path.display(),
+                        key_desc
+                    ),
+                    Err(e) => eprintln!(
+                        "Command '{}' failed for keys [{}]: {}",
+                        path.display(),
+                        key_desc,
+                        e
+                    ),
                 }
             });
         } else {
