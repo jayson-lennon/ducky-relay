@@ -2,10 +2,8 @@
 //!
 //! A varlink service that listens for keystroke messages.
 
-use serde::{Deserialize, Serialize};
-use zlink::{introspect, unix, ReplyError, Server, service};
-
-const SOCKET_PATH: &str = "/run/duckycap.varlink";
+use ducky_relay::{KeystrokeError, SendKeysResponse, VARLINK_SOCKET};
+use zlink::{unix, Server, service};
 
 #[tokio::main]
 async fn main() {
@@ -15,10 +13,10 @@ async fn main() {
 
 pub async fn run_server() {
     // Clean up any existing socket file
-    let _ = tokio::fs::remove_file(SOCKET_PATH).await;
+    let _ = tokio::fs::remove_file(VARLINK_SOCKET).await;
     
-    println!("Binding to socket: {}", SOCKET_PATH);
-    let listener = unix::bind(SOCKET_PATH).expect("Failed to bind to socket");
+    println!("Binding to socket: {}", VARLINK_SOCKET);
+    let listener = unix::bind(VARLINK_SOCKET).expect("Failed to bind to socket");
 
     // Create our service and server
     let service = KeystrokeService::new();
@@ -28,24 +26,6 @@ pub async fn run_server() {
         Ok(_) => println!("Server done."),
         Err(e) => eprintln!("Server error: {:?}", e),
     }
-}
-
-// ============================================================================
-// Message Types
-// ============================================================================
-
-/// Response for SendKeys method
-#[derive(Debug, Clone, Serialize, Deserialize, introspect::Type)]
-pub struct SendKeysResponse {
-    success: bool,
-    keys: Vec<String>,
-}
-
-/// Error types for the service
-#[derive(Debug, ReplyError, introspect::ReplyError)]
-#[zlink(interface = "io.ducky.Keystroke")]
-enum KeystrokeError {
-    InvalidKey { message: String },
 }
 
 // ============================================================================

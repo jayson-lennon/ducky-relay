@@ -1,60 +1,40 @@
-//! DuckyPad Capture Daemon
+//! `DuckyPad` Capture Daemon
 //!
 //! Captures input from duckyPad keyboard using evdev with exclusive grab,
 //! blocking input from reaching the system and forwarding key combinations
 //! to the varlink service.
 
+use ducky_relay::{KeystrokeError, KeystrokeProxy, VARLINK_SOCKET};
+use error_stack::{Report, ResultExt};
 use evdev::{Device, EventSummary, EventType, KeyCode};
 use std::collections::HashSet;
 use std::path::Path;
-use zlink::{proxy, unix};
+use wherror::Error;
+use zlink::unix;
 
-const VARLINK_SOCKET: &str = "/run/duckycap.varlink";
+#[derive(Debug, Error)]
+#[error(debug)]
+pub struct DuckycapError;
+
 const DUCKYPAD_SYMLINK: &str = "/dev/input/duckypad";
 const DUCKYPAD_VENDOR_ID: u16 = 0x0483;
 const DUCKYPAD_PRODUCT_ID: u16 = 0xD11C;
-
-// Proxy trait for the client
-#[proxy("io.ducky.Keystroke")]
-trait KeystrokeProxy {
-    async fn send_keys(
-        &mut self,
-        keys: &[&str],
-    ) -> zlink::Result<Result<SendKeysOutput, KeystrokeError>>;
-}
-
-// Output type for send_keys (owned, not borrowed)
-#[derive(Debug, Clone, serde::Deserialize)]
-struct SendKeysOutput {
-    success: bool,
-    keys: Vec<String>,
-}
-
-// Error type
-#[derive(Debug, Clone, PartialEq, zlink::ReplyError)]
-#[zlink(interface = "io.ducky.Keystroke")]
-enum KeystrokeError {
-    InvalidKey { message: String },
-}
 
 #[tokio::main]
 async fn main() {
     println!("Starting duckyPad capture daemon");
 
     // Find and open the duckyPad device
-    let device = match find_duckypad_device() {
-        Some(dev) => dev,
-        None => {
-            eprintln!("duckyPad device not found. Exiting.");
-            std::process::exit(1);
-        }
+    let Some(device) = find_duckypad_device() else {
+        eprintln!("duckyPad device not found. Exiting.");
+        std::process::exit(1);
     };
 
     println!("Found device: {}", device.name().unwrap_or("unknown"));
 
     // Run the capture loop
     if let Err(e) = run_capture(device).await {
-        eprintln!("Capture error: {:?}", e);
+        eprintln!("Capture error: {e:?}");
         std::process::exit(1);
     }
 }
@@ -65,8 +45,9 @@ fn find_duckypad_device() -> Option<Device> {
     if Path::new(DUCKYPAD_SYMLINK).exists() {
         if let Ok(device) = Device::open(DUCKYPAD_SYMLINK) {
             // Verify it's the correct device
+            #[allow(clippy::redundant_else)]
             if is_duckypad(&device) {
-                println!("Using device via udev symlink: {}", DUCKYPAD_SYMLINK);
+                println!("Using device via udev symlink: {DUCKYPAD_SYMLINK}");
                 return Some(device);
             } else {
                 println!("Warning: Symlink exists but device doesn't match expected VID:PID");
@@ -94,9 +75,12 @@ fn is_duckypad(device: &Device) -> bool {
 }
 
 /// Main capture loop
-async fn run_capture(mut device: Device) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_capture(mut device: Device) -> Result<(), Report<DuckycapError>> {
     // Grab the device exclusively - this blocks input from reaching other applications
-    device.grab()?;
+    device
+        .grab()
+        .change_context(DuckycapError)
+        .attach("failed to grab device")?;
     println!("Device grabbed exclusively. Input will be blocked from the system.");
 
     // Track currently held keys
@@ -109,10 +93,12 @@ async fn run_capture(mut device: Device) -> Result<(), Box<dyn std::error::Error
         let events = match device.fetch_events() {
             Ok(events) => events.collect::<Vec<_>>(),
             Err(e) => {
-                eprintln!("Error reading events: {:?}", e);
+                eprintln!("Error reading events: {e:?}");
                 // Device was likely disconnected
                 println!("Device may have been disconnected. Exiting.");
-                return Err(Box::new(e));
+                return Err(e)
+                    .change_context(DuckycapError)
+                    .attach("error reading events");
             }
         };
 
@@ -124,6 +110,7 @@ async fn run_capture(mut device: Device) -> Result<(), Box<dyn std::error::Error
             }
 
             // Destructure the event to get key details
+            #[allow(clippy::match_same_arms)]
             match event.destructure() {
                 EventSummary::Key(_key_event, key, value) => {
                     // Handle key press (value == 1) and release (value == 0)
@@ -134,10 +121,10 @@ async fn run_capture(mut device: Device) -> Result<(), Box<dyn std::error::Error
                             if held_keys.insert(key) {
                                 // Key was newly pressed, send update
                                 let key_names = get_key_names(&held_keys);
-                                println!("Key press: {:?}", key_names);
+                                println!("Key press: {key_names:?}");
 
                                 if let Err(e) = send_keys_to_varlink(&key_names).await {
-                                    eprintln!("Failed to send to varlink: {:?}", e);
+                                    eprintln!("Failed to send to varlink: {e:?}");
                                 }
                             }
                         }
@@ -151,7 +138,8 @@ async fn run_capture(mut device: Device) -> Result<(), Box<dyn std::error::Error
                         _ => {}
                     }
                 }
-                _ => continue,
+                // only care about key events
+                _ => (),
             }
         }
     }
@@ -166,7 +154,9 @@ fn get_key_names(keys: &HashSet<KeyCode>) -> Vec<String> {
     names
 }
 
-/// Convert a KeyCode to a human-readable name
+/// Convert a `KeyCode` to a human-readable name
+#[allow(clippy::match_same_arms)]
+#[allow(clippy::too_many_lines)]
 fn key_to_name(key: KeyCode) -> Option<String> {
     // Get the key code
     let code = key.code();
@@ -298,7 +288,7 @@ fn key_to_name(key: KeyCode) -> Option<String> {
 
         // Unknown - return code number
         _ => {
-            return Some(format!("key{}", code));
+            return None;
         }
     };
 
@@ -306,27 +296,29 @@ fn key_to_name(key: KeyCode) -> Option<String> {
 }
 
 /// Send key combination to varlink service using zlink proxy
-async fn send_keys_to_varlink(keys: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+async fn send_keys_to_varlink(keys: &[String]) -> Result<(), Report<DuckycapError>> {
     if keys.is_empty() {
         return Ok(());
     }
 
     // Connect to varlink socket using zlink::unix::connect
-    let mut conn = unix::connect(VARLINK_SOCKET).await?;
+    let mut conn = unix::connect(VARLINK_SOCKET)
+        .await
+        .change_context(DuckycapError)
+        .attach_with(|| format!("failed to connect to varlink socket at '{VARLINK_SOCKET}'"))?;
 
     // Convert Vec<String> to Vec<&str> for the proxy
-    let key_refs: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
+    let key_refs: Vec<&str> = keys.iter().map(String::as_str).collect();
 
     // Use the proxy-generated method directly on the connection
-    let result = conn.send_keys(&key_refs).await?;
+    let result = conn
+        .send_keys(&key_refs)
+        .await
+        .change_context(DuckycapError)
+        .attach("failed to send keystroke event via varlink")?;
 
-    match result {
-        Ok(_output) => {
-            // Success
-        }
-        Err(KeystrokeError::InvalidKey { message }) => {
-            eprintln!("Invalid key error: {}", message);
-        }
+    if let Err(KeystrokeError::InvalidKey { message }) = result {
+        eprintln!("Invalid key error: {message}");
     }
 
     Ok(())

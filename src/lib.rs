@@ -1,14 +1,48 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
+//! Ducky Relay Shared Library
+//!
+//! Common types and constants for the ducky-relay varlink service and client.
+
+use serde::{Deserialize, Serialize};
+use zlink::{introspect, ReplyError};
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+/// Default varlink socket path
+pub const VARLINK_SOCKET: &str = "/run/duckycap.varlink";
+
+// ============================================================================
+// Message Types
+// ============================================================================
+
+/// Response for SendKeys method
+#[derive(Debug, Clone, Serialize, Deserialize, introspect::Type)]
+pub struct SendKeysResponse {
+    pub success: bool,
+    pub keys: Vec<String>,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+// ============================================================================
+// Error Types
+// ============================================================================
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
+/// Error types for the keystroke service
+#[derive(Debug, Clone, PartialEq, ReplyError, introspect::ReplyError)]
+#[zlink(interface = "io.ducky.Keystroke")]
+pub enum KeystrokeError {
+    InvalidKey { message: String },
+}
+
+// ============================================================================
+// Client Proxy
+// ============================================================================
+
+// Proxy trait for the client
+#[zlink::proxy("io.ducky.Keystroke")]
+pub trait KeystrokeProxy {
+    async fn send_keys(
+        &mut self,
+        keys: &[&str],
+    ) -> zlink::Result<Result<SendKeysResponse, KeystrokeError>>;
 }
