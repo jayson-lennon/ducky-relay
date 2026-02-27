@@ -120,13 +120,65 @@ sudo cp systemd/duckycap-varlink.service /etc/systemd/system/
 sudo systemctl daemon-reload
 ```
 
-### 4. Enable the varlink socket
+### 4. Create configuration file
+
+```bash
+# Create config directory
+sudo mkdir -p /etc/duckycap
+
+# Copy example config and edit as needed
+sudo cp config.example.toml /etc/duckycap/config.toml
+sudo nano /etc/duckycap/config.toml
+```
+
+### 5. Enable the varlink socket
 
 ```bash
 sudo systemctl enable --now duckycap-varlink.socket
 ```
 
 The `duckycap.service` will be activated automatically by udev when the duckyPad is connected.
+
+## Configuration
+
+The `duckycap-varlink` service uses a TOML configuration file to map key combinations to shell scripts.
+
+### Configuration File Format
+
+```toml
+# User to run commands as (required)
+user = "your-username"
+
+# Command mappings
+[[commands]]
+keys = "a"
+path = "/home/your-username/scripts/volume-up.sh"
+
+[[commands]]
+keys = "b"
+path = "/home/your-username/scripts/volume-down.sh"
+
+[[commands]]
+keys = "meta+f1"
+path = "/home/your-username/scripts/toggle-mute.sh"
+```
+
+### Key Combinations
+
+- Single keys: `"a"`, `"f1"`, `"enter"`
+- Combinations use `+`: `"meta+f1"`, `"ctrl+shift+k"`
+- Keys are normalized (sorted and lowercased), so `"meta+f1"` and `"f1+meta"` are equivalent
+
+### Command Execution
+
+Commands are executed using `runuser` with a login shell:
+- Runs as the configured user
+- Loads the user's shell profile (`~/.profile`, `~/.bashrc`, etc.)
+- Scripts must have executable permissions
+
+### Example Configuration
+
+See [`config.example.toml`](config.example.toml) for a complete example.
 
 ## Usage
 
@@ -177,8 +229,8 @@ varlinkctl introspect /run/duckycap.varlink io.ducky.Keystroke
 ### Run directly (without systemd)
 
 ```bash
-# Terminal 1: Start varlink service
-sudo cargo run --bin duckycap-varlink
+# Terminal 1: Start varlink service with config file
+sudo cargo run --bin duckycap-varlink -- --config config.example.toml
 
 # Terminal 2: Start capture daemon (requires root for evdev access)
 sudo cargo run --bin duckycap
@@ -230,6 +282,7 @@ Make sure the duckycap daemon is running and has successfully grabbed the device
 |------|---------|
 | `src/bin/duckycap.rs` | Capture daemon with evdev exclusive grab |
 | `src/bin/duckycap-varlink.rs` | Varlink service implementation |
+| `config.example.toml` | Example configuration file |
 | `systemd/99-duckypad.rules` | udev rule for device identification |
 | `systemd/duckycap.service` | systemd unit for capture daemon |
 | `systemd/duckycap-varlink.socket` | systemd socket unit for varlink |

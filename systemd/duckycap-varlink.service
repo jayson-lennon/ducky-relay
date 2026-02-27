@@ -5,7 +5,7 @@ Requires=duckycap-varlink.socket
 
 [Service]
 Type=notify
-ExecStart=/usr/bin/duckycap-varlink
+ExecStart=/usr/bin/duckycap-varlink --config /etc/duckycap/config.toml
 Restart=on-failure
 StandardOutput=journal
 StandardError=journal
@@ -13,7 +13,7 @@ StandardError=journal
 # Security hardening
 NoNewPrivileges=yes
 ProtectSystem=strict
-ProtectHome=yes
+ProtectHome=read-only
 PrivateTmp=yes
 ReadWritePaths=/run/duckycap.varlink
 
