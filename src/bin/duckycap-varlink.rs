@@ -3,12 +3,7 @@
 //! A varlink service that listens for keystroke messages.
 
 use ducky_relay::{KeystrokeError, SendKeysResponse, VARLINK_SOCKET};
-use wherror::Error;
 use zlink::{Server, service, unix};
-
-#[derive(Debug, Error)]
-#[error(debug)]
-pub struct DuckycapVarlinkError;
 
 #[tokio::main]
 async fn main() {

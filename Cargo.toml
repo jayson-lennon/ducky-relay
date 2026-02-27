@@ -24,4 +24,4 @@ serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 zlink = { version = "0.4", features = ["server", "service", "proxy"] }
 wherror = "2.3.1"
-error-stack = "0.6.0"
+error-stack = { version = "0.6.0", features = ["serde"] }
