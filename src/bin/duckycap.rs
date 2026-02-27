@@ -7,15 +7,35 @@
 use evdev::{Device, EventSummary, EventType, KeyCode};
 use std::collections::HashSet;
 use std::path::Path;
-
-mod keystroke_varlink {
-    include!("../keystroke_varlink.rs");
-}
+use zlink::{proxy, unix};
 
 const VARLINK_SOCKET: &str = "/run/duckycap.varlink";
 const DUCKYPAD_SYMLINK: &str = "/dev/input/duckypad";
 const DUCKYPAD_VENDOR_ID: u16 = 0x0483;
 const DUCKYPAD_PRODUCT_ID: u16 = 0xD11C;
+
+// Proxy trait for the client
+#[proxy("io.ducky.Keystroke")]
+trait KeystrokeProxy {
+    async fn send_keys(
+        &mut self,
+        keys: &[&str],
+    ) -> zlink::Result<Result<SendKeysOutput, KeystrokeError>>;
+}
+
+// Output type for send_keys (owned, not borrowed)
+#[derive(Debug, Clone, serde::Deserialize)]
+struct SendKeysOutput {
+    success: bool,
+    keys: Vec<String>,
+}
+
+// Error type
+#[derive(Debug, Clone, PartialEq, zlink::ReplyError)]
+#[zlink(interface = "io.ducky.Keystroke")]
+enum KeystrokeError {
+    InvalidKey { message: String },
+}
 
 #[tokio::main]
 async fn main() {
@@ -291,20 +311,20 @@ async fn send_keys_to_varlink(keys: &[String]) -> Result<(), Box<dyn std::error:
         return Ok(());
     }
 
-    // Connect to varlink socket
-    let mut connection = zlink_tokio::unix::connect(VARLINK_SOCKET).await?;
+    // Connect to varlink socket using zlink::unix::connect
+    let mut conn = unix::connect(VARLINK_SOCKET).await?;
 
     // Convert Vec<String> to Vec<&str> for the proxy
     let key_refs: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
 
-    // Send the keys using the Keystroke trait implemented on Connection
-    let result = keystroke_varlink::Keystroke::send_keys(&mut connection, &key_refs).await?;
+    // Use the proxy-generated method directly on the connection
+    let result = conn.send_keys(&key_refs).await?;
 
     match result {
         Ok(_output) => {
             // Success
         }
-        Err(keystroke_varlink::KeystrokeError::InvalidKey { message }) => {
+        Err(KeystrokeError::InvalidKey { message }) => {
             eprintln!("Invalid key error: {}", message);
         }
     }

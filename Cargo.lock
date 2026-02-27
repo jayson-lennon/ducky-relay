@@ -111,7 +111,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "zlink",
- "zlink-tokio",
 ]
 
 [[package]]
