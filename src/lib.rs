@@ -3,7 +3,7 @@
 //! Common types and constants for the ducky-relay varlink service and client.
 
 use serde::{Deserialize, Serialize};
-use zlink::{introspect, ReplyError};
+use zlink::{ReplyError, introspect};
 
 // ============================================================================
 // Constants
@@ -16,7 +16,7 @@ pub const VARLINK_SOCKET: &str = "/run/duckycap.varlink";
 // Message Types
 // ============================================================================
 
-/// Response for SendKeys method
+/// Response for `SendKeys` method
 #[derive(Debug, Clone, Serialize, Deserialize, introspect::Type)]
 pub struct SendKeysResponse {
     pub success: bool,
