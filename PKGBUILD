@@ -2,47 +2,30 @@
 
 pkgname=duckycap
 pkgver=0.1.0
-pkgrel=6
+pkgrel=8
 pkgdesc='capture duckypad input and relay it to another application'
 url=''
 license=(GPL-3.0-only)
 makedepends=('cargo')
 depends=('systemd')
 arch=('i686' 'x86_64' 'armv6h' 'armv7h')
-source=(
-    "99-duckypad.rules"
-    "duckycap.service"
-    "duckycap-varlink.service"
-    "duckycap-varlink.socket"
-    "README.md"
-)
-b2sums=(
-    'SKIP'
-    'SKIP'
-    'SKIP'
-    'SKIP'
-    'SKIP'
-)
 
-# Build directory for isolated builds
-_builddir="$srcdir/$pkgname-$pkgver"
+# No source array needed - we reference files directly from $startdir
+# This avoids conflicts with the project's src/ directory
+
+# Dedicated build directory outside of project's src/ folder
+_builddir="$startdir/.build/$pkgname-$pkgver"
 
 prepare() {
-    # Create build directory structure
+    # Create dedicated build directory
+    rm -rf "$_builddir"
     mkdir -p "$_builddir"
-    
-    # Copy source files to build directory
+
+    # Copy Rust source files to build directory
     cp -r "$startdir/src" "$_builddir/"
     cp "$startdir/Cargo.toml" "$_builddir/"
     cp "$startdir/Cargo.lock" "$_builddir/"
-    
-    # Copy systemd files to srcdir for package() access
-    cp "$startdir/systemd/99-duckypad.rules" "$srcdir/"
-    cp "$startdir/systemd/duckycap.service" "$srcdir/"
-    cp "$startdir/systemd/duckycap-varlink.service" "$srcdir/"
-    cp "$startdir/systemd/duckycap-varlink.socket" "$srcdir/"
-    cp "$startdir/README.md" "$srcdir/"
-    
+
     # Fetch dependencies in build directory
     cd "$_builddir"
     export RUSTUP_TOOLCHAIN=stable
@@ -52,7 +35,7 @@ prepare() {
 build() {
     cd "$_builddir"
     export RUSTUP_TOOLCHAIN=stable
-    export CARGO_TARGET_DIR="$srcdir/$pkgname-$pkgver/build"
+    export CARGO_TARGET_DIR="$_builddir/target"
     cargo build --frozen --release --all-features
 }
 
@@ -62,22 +45,22 @@ check() {
 }
 
 package() {
-    local _buildtarget="$srcdir/$pkgname-$pkgver/build/release"
-    
+    local _buildtarget="$_builddir/target/release"
+
     # Install binaries
     install -Dm0755 -t "$pkgdir/usr/bin/" "$_buildtarget/duckycap"
     install -Dm0755 -t "$pkgdir/usr/bin/" "$_buildtarget/duckycap-varlink"
 
-    # Install udev rule
-    install -Dm0644 -t "$pkgdir/usr/lib/udev/rules.d/" "$srcdir/99-duckypad.rules"
+    # Install udev rule (reference directly from project's systemd folder)
+    install -Dm0644 -t "$pkgdir/usr/lib/udev/rules.d/" "$startdir/systemd/99-duckypad.rules"
 
-    # Install systemd units
-    install -Dm0644 -t "$pkgdir/usr/lib/systemd/system/" "$srcdir/duckycap.service"
-    install -Dm0644 -t "$pkgdir/usr/lib/systemd/system/" "$srcdir/duckycap-varlink.service"
-    install -Dm0644 -t "$pkgdir/usr/lib/systemd/system/" "$srcdir/duckycap-varlink.socket"
+    # Install systemd units (reference directly from project's systemd folder)
+    install -Dm0644 -t "$pkgdir/usr/lib/systemd/system/" "$startdir/systemd/duckycap.service"
+    install -Dm0644 -t "$pkgdir/usr/lib/systemd/system/" "$startdir/systemd/duckycap-varlink.service"
+    install -Dm0644 -t "$pkgdir/usr/lib/systemd/system/" "$startdir/systemd/duckycap-varlink.socket"
 
-    # Install documentation
-    install -Dm0644 -t "$pkgdir/usr/share/doc/duckycap/" "$srcdir/README.md"
+    # Install documentation (reference directly from project folder)
+    install -Dm0644 -t "$pkgdir/usr/share/doc/duckycap/" "$startdir/README.md"
 }
 
 post_install() {

@@ -3,7 +3,7 @@
 
 # makepkg build artifacts
 /pkg
-/src
+/.build
 *.tar.zst
 *.tar.gz
 *.tar.xz

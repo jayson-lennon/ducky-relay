@@ -5,16 +5,22 @@
 #   Vendor ID: 0483 (STMicroelectronics)
 #   Product ID: D11C (duckyPad)
 #
+# NOTE: The duckyPad exposes multiple interfaces (Keyboard, Mouse, Generic).
+# We only want to capture the Keyboard interface which has ID_INPUT_KEYBOARD=1.
+#
 # Installation:
 #   sudo cp 99-duckypad.rules /etc/udev/rules.d/
 #   sudo udevadm control --reload-rules
 #   sudo udevadm trigger
 
-# Match the duckyPad keyboard interface
-# Use ATTRS to match parent device properties (USB device)
+# Match only the duckyPad keyboard interface
+# - SUBSYSTEM=="input": Must be an input device
+# - ATTRS{idVendor/idProduct}: Match duckyPad USB device (parent)
+# - ENV{ID_INPUT_KEYBOARD}=="1": Only match keyboard interface, not mouse
 SUBSYSTEM=="input", \
   ATTRS{idVendor}=="0483", \
   ATTRS{idProduct}=="d11c", \
+  ENV{ID_INPUT_KEYBOARD}=="1", \
   SYMLINK+="input/duckypad", \
   TAG+="systemd", \
   ENV{SYSTEMD_WANTS}="duckycap.service"
