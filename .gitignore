@@ -1,6 +1,9 @@
 /plans
 /target
 
+# makepkg build artifacts
 /pkg
-/src/target
+/src
 *.tar.zst
+*.tar.gz
+*.tar.xz
