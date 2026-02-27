@@ -5,7 +5,7 @@ Requires=duckycap-varlink.socket
 
 [Service]
 Type=notify
-ExecStart=/usr/bin/duckycap-varlink --config /etc/duckycap/config.toml
+ExecStart=/usr/bin/duckycap-varlink --config /mnt/zed/work/youtube/scripts/ducky-relay.toml
 Restart=on-failure
 StandardOutput=journal
 StandardError=journal
