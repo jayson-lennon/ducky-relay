@@ -1,2 +1,6 @@
 /plans
 /target
+
+/pkg
+/src/target
+*.tar.zst
