@@ -1,0 +1,21 @@
+[Unit]
+Description=Ducky Relay Varlink Service
+Documentation=man:varlinkctl(1)
+Requires=duckycap-varlink.socket
+
+[Service]
+Type=notify
+ExecStart=/usr/local/bin/duckycap-varlink
+Restart=on-failure
+StandardOutput=journal
+StandardError=journal
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/run/duckycap.varlink
+
+[Install]
+WantedBy=multi-user.target

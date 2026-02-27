@@ -1,0 +1,10 @@
+[Unit]
+Description=Ducky Relay Varlink Socket
+Documentation=man:varlinkctl(1)
+
+[Socket]
+ListenStream=/run/duckycap.varlink
+SocketMode=0666
+
+[Install]
+WantedBy=sockets.target
