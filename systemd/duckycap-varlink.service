@@ -5,7 +5,7 @@ Requires=duckycap-varlink.socket
 
 [Service]
 Type=notify
-ExecStart=/usr/local/bin/duckycap-varlink
+ExecStart=/usr/bin/duckycap-varlink
 Restart=on-failure
 StandardOutput=journal
 StandardError=journal

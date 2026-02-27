@@ -1,6 +1,6 @@
 [Unit]
 Description=DuckyPad Capture Daemon
-Documentation=file:///usr/local/share/doc/ducky-relay/README.md
+Documentation=file:///usr/share/doc/duckycap/README.md
 # This service is activated by udev when the duckyPad is connected
 # See systemd/99-duckypad.rules
 Requires=duckycap-varlink.socket
@@ -8,7 +8,7 @@ After=duckycap-varlink.socket
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/duckycap
+ExecStart=/usr/bin/duckycap
 # Restart on failure (e.g., if device is disconnected)
 Restart=on-failure
 RestartSec=1
