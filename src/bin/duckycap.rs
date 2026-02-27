@@ -123,13 +123,23 @@ async fn run_capture(mut device: Device) -> Result<(), Report<DuckycapError>> {
                                 let key_names = get_key_names(&held_keys);
                                 println!("Key press: {key_names:?}");
 
-                                if let Err(e) = send_keys_to_varlink(&key_names).await {
+                                if let Err(e) = send_keys_to_varlink(&key_names, true).await {
                                     eprintln!("Failed to send to varlink: {e:?}");
                                 }
                             }
                         }
                         0 => {
-                            // Key release - just remove from held set, don't send
+                            // Key release - send key up event BEFORE removing
+                            let key_names = get_key_names(&held_keys);
+                            if !key_names.is_empty() {
+                                println!("Key release: {key_names:?}");
+
+                                if let Err(e) = send_keys_to_varlink(&key_names, false).await {
+                                    eprintln!("Failed to send key up to varlink: {e:?}");
+                                }
+                            }
+
+                            // Now remove the key from tracking
                             held_keys.remove(&key);
                         }
                         2 => {
@@ -296,7 +306,7 @@ fn key_to_name(key: KeyCode) -> Option<String> {
 }
 
 /// Send key combination to varlink service using zlink proxy
-async fn send_keys_to_varlink(keys: &[String]) -> Result<(), Report<DuckycapError>> {
+async fn send_keys_to_varlink(keys: &[String], pressed: bool) -> Result<(), Report<DuckycapError>> {
     if keys.is_empty() {
         return Ok(());
     }
@@ -312,7 +322,7 @@ async fn send_keys_to_varlink(keys: &[String]) -> Result<(), Report<DuckycapErro
 
     // Use the proxy-generated method directly on the connection
     let result = conn
-        .send_keys(&key_refs)
+        .send_keys(&key_refs, pressed)
         .await
         .change_context(DuckycapError)
         .attach("failed to send keystroke event via varlink")?;

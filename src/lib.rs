@@ -21,6 +21,7 @@ pub const VARLINK_SOCKET: &str = "/run/duckycap.varlink";
 pub struct SendKeysResponse {
     pub success: bool,
     pub keys: Vec<String>,
+    pub pressed: bool,
 }
 
 // ============================================================================
@@ -44,5 +45,6 @@ pub trait KeystrokeProxy {
     async fn send_keys(
         &mut self,
         keys: &[&str],
+        pressed: bool,
     ) -> zlink::Result<Result<SendKeysResponse, KeystrokeError>>;
 }

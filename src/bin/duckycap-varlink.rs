@@ -9,7 +9,16 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Command;
+use std::time::{Duration, Instant};
 use zlink::{Server, service, unix};
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+/// Debounce duration to prevent rapid-fire command execution
+/// The duckyPad sends continuous press/release events even when key is held
+const DEBOUNCE_DURATION: Duration = Duration::from_millis(500);
 
 // ============================================================================
 // CLI Arguments
@@ -178,6 +187,10 @@ struct KeystrokeService {
     keystroke_count: u64,
     user: String,
     commands: HashMap<Vec<String>, PathBuf>,
+    /// Track last trigger time for each key combination (debounce)
+    /// The duckyPad sends continuous press/release events, so we use
+    /// time-based debouncing instead of tracking key state
+    last_triggered: HashMap<Vec<String>, Instant>,
 }
 
 impl KeystrokeService {
@@ -186,6 +199,7 @@ impl KeystrokeService {
             keystroke_count: 0,
             user,
             commands,
+            last_triggered: HashMap::new(),
         }
     }
 }
@@ -193,7 +207,7 @@ impl KeystrokeService {
 #[service(interface = "io.ducky.Keystroke")]
 impl KeystrokeService {
     #[allow(clippy::unused_async)]
-    async fn send_keys(&mut self, keys: Vec<String>) -> Result<SendKeysResponse, KeystrokeError> {
+    async fn send_keys(&mut self, keys: Vec<String>, pressed: bool) -> Result<SendKeysResponse, KeystrokeError> {
         let keys: Vec<String> = keys.into_iter().filter(|k| !k.trim().is_empty()).collect();
 
         if keys.is_empty() {
@@ -208,9 +222,56 @@ impl KeystrokeService {
 
         self.keystroke_count += 1;
         println!(
-            "Received key combination #{}: {:?}",
-            self.keystroke_count, normalized
+            "Received key combination #{}: {:?} (pressed={})",
+            self.keystroke_count, normalized, pressed
         );
+
+        // The duckyPad sends continuous press/release events even when key is held,
+        // so we ignore release events and use time-based debouncing for presses
+        if !pressed {
+            println!("Ignoring key release event (spurious from duckyPad): {:?}", normalized);
+            return Ok(SendKeysResponse {
+                success: true,
+                keys: normalized,
+                pressed: false,
+            });
+        }
+
+        // Key press event - check debounce
+        let now = Instant::now();
+
+        // Clean up stale debounce entries (older than DEBOUNCE_DURATION)
+        self.last_triggered.retain(|_, last_time| {
+            now.duration_since(*last_time) < DEBOUNCE_DURATION
+        });
+
+        let should_trigger = match self.last_triggered.get(&normalized) {
+            Some(last_time) => {
+                let elapsed = now.duration_since(*last_time);
+                if elapsed >= DEBOUNCE_DURATION {
+                    println!("Debounce window passed ({:?} >= {:?}), allowing trigger", elapsed, DEBOUNCE_DURATION);
+                    true
+                } else {
+                    println!("Ignoring key press within debounce window ({:?} < {:?}): {:?}", elapsed, DEBOUNCE_DURATION, normalized);
+                    false
+                }
+            }
+            None => {
+                println!("First press for this key combination: {:?}", normalized);
+                true
+            }
+        };
+
+        if !should_trigger {
+            return Ok(SendKeysResponse {
+                success: true,
+                keys: normalized,
+                pressed: false, // Indicates no action taken due to debounce
+            });
+        }
+
+        // Update last triggered time
+        self.last_triggered.insert(normalized.clone(), now);
 
         // Look up and execute command if found
         if let Some(script_path) = self.commands.get(&normalized) {
@@ -234,6 +295,7 @@ impl KeystrokeService {
         Ok(SendKeysResponse {
             success: true,
             keys: normalized,
+            pressed,
         })
     }
 }

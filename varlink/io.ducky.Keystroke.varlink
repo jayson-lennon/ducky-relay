@@ -8,7 +8,8 @@ interface io.ducky.Keystroke
 method SendKey(key: string) -> (success: bool, key: string)
 
 # Send a key combination (multiple keys held together)
-method SendKeys(keys: []string) -> (success: bool, keys: []string)
+# pressed: true = key down, false = key up
+method SendKeys(keys: []string, pressed: bool) -> (success: bool, keys: []string, pressed: bool)
 
 # Error returned when the key parameter is invalid
 error InvalidKey(message: string)
