@@ -84,6 +84,19 @@ pub struct SendKeyResponse {
     key: String,
 }
 
+/// Parameters for SendKeys method (key combinations)
+#[derive(Debug, Clone, Serialize, Deserialize, introspect::Type)]
+pub struct SendKeysParameters {
+    keys: Vec<String>,
+}
+
+/// Response for SendKeys method
+#[derive(Debug, Clone, Serialize, Deserialize, introspect::Type)]
+pub struct SendKeysResponse {
+    success: bool,
+    keys: Vec<String>,
+}
+
 /// Error types for the service
 #[derive(Debug, ReplyError, introspect::ReplyError)]
 #[zlink(interface = "io.ducky.Keystroke")]
@@ -122,6 +135,29 @@ impl KeystrokeService {
         Ok(SendKeyResponse {
             success: true,
             key: key.to_string(),
+        })
+    }
+
+    async fn send_keys(&mut self, parameters: SendKeysParameters) -> Result<SendKeysResponse, KeystrokeError> {
+        let keys: Vec<String> = parameters.keys
+            .into_iter()
+            .filter(|k| !k.trim().is_empty())
+            .collect();
+        
+        if keys.is_empty() {
+            return Err(KeystrokeError::InvalidKey {
+                message: "Keys list cannot be empty".to_string(),
+            });
+        }
+        
+        println!("Received key combination: {:?}", keys);
+        
+        // TODO: Add your keystroke handling logic here
+        // For example: forward to a device, store in buffer, etc.
+        
+        Ok(SendKeysResponse {
+            success: true,
+            keys,
         })
     }
 }

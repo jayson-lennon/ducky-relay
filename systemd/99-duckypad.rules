@@ -1,0 +1,20 @@
+# udev rule for duckyPad Keyboard
+# Creates a stable symlink and activates the capture service when the device is connected
+#
+# Device info:
+#   Vendor ID: 0483 (STMicroelectronics)
+#   Product ID: D11C (duckyPad)
+#
+# Installation:
+#   sudo cp 99-duckypad.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger
+
+# Match the duckyPad keyboard interface
+# Use ATTRS to match parent device properties (USB device)
+SUBSYSTEM=="input", \
+  ATTRS{idVendor}=="0483", \
+  ATTRS{idProduct}=="d11c", \
+  SYMLINK+="input/duckypad", \
+  TAG+="systemd", \
+  ENV{SYSTEMD_WANTS}="duckycap.service"
