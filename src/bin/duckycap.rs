@@ -6,16 +6,19 @@
 
 use evdev::{Device, EventSummary, EventType, KeyCode};
 use std::collections::HashSet;
-use std::io::{Read, Write};
-use std::os::unix::net::UnixStream;
 use std::path::Path;
+
+mod keystroke_varlink {
+    include!("../keystroke_varlink.rs");
+}
 
 const VARLINK_SOCKET: &str = "/run/duckycap.varlink";
 const DUCKYPAD_SYMLINK: &str = "/dev/input/duckypad";
 const DUCKYPAD_VENDOR_ID: u16 = 0x0483;
 const DUCKYPAD_PRODUCT_ID: u16 = 0xD11C;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     println!("Starting duckyPad capture daemon");
 
     // Find and open the duckyPad device
@@ -30,7 +33,7 @@ fn main() {
     println!("Found device: {}", device.name().unwrap_or("unknown"));
 
     // Run the capture loop
-    if let Err(e) = run_capture(device) {
+    if let Err(e) = run_capture(device).await {
         eprintln!("Capture error: {:?}", e);
         std::process::exit(1);
     }
@@ -71,7 +74,7 @@ fn is_duckypad(device: &Device) -> bool {
 }
 
 /// Main capture loop
-fn run_capture(mut device: Device) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_capture(mut device: Device) -> Result<(), Box<dyn std::error::Error>> {
     // Grab the device exclusively - this blocks input from reaching other applications
     device.grab()?;
     println!("Device grabbed exclusively. Input will be blocked from the system.");
@@ -113,7 +116,7 @@ fn run_capture(mut device: Device) -> Result<(), Box<dyn std::error::Error>> {
                                 let key_names = get_key_names(&held_keys);
                                 println!("Key press: {:?}", key_names);
 
-                                if let Err(e) = send_keys_to_varlink(&key_names) {
+                                if let Err(e) = send_keys_to_varlink(&key_names).await {
                                     eprintln!("Failed to send to varlink: {:?}", e);
                                 }
                             }
@@ -282,82 +285,29 @@ fn key_to_name(key: KeyCode) -> Option<String> {
     Some(name.to_string())
 }
 
-/// Send key combination to varlink service
-fn send_keys_to_varlink(keys: &[String]) -> Result<(), VarlinkError> {
+/// Send key combination to varlink service using zlink proxy
+async fn send_keys_to_varlink(keys: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     if keys.is_empty() {
         return Ok(());
     }
 
     // Connect to varlink socket
-    let mut stream =
-        UnixStream::connect(VARLINK_SOCKET).map_err(|e| VarlinkError::Connection(e.to_string()))?;
+    let mut connection = zlink_tokio::unix::connect(VARLINK_SOCKET).await?;
 
-    // Build varlink request
-    // Varlink protocol: one JSON object per line, null byte terminates
-    let request = serde_json::json!({
-        "method": "io.ducky.Keystroke.SendKeys",
-        "parameters": {
-            "keys": keys
+    // Convert Vec<String> to Vec<&str> for the proxy
+    let key_refs: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
+
+    // Send the keys using the Keystroke trait implemented on Connection
+    let result = keystroke_varlink::Keystroke::send_keys(&mut connection, &key_refs).await?;
+
+    match result {
+        Ok(_output) => {
+            // Success
         }
-    });
-
-    let request_str =
-        serde_json::to_string(&request).map_err(|e| VarlinkError::Protocol(e.to_string()))?;
-
-    // Send request (null byte terminated)
-    let request_bytes = format!("{}\0", request_str);
-    stream
-        .write_all(request_bytes.as_bytes())
-        .map_err(|e| VarlinkError::Io(e.to_string()))?;
-    stream
-        .flush()
-        .map_err(|e| VarlinkError::Io(e.to_string()))?;
-
-    // Read response (null byte terminated)
-    let mut response_buf = Vec::new();
-    let mut byte = [0u8; 1];
-    loop {
-        match stream.read(&mut byte) {
-            Ok(0) => break, // EOF
-            Ok(_) => {
-                if byte[0] == 0 {
-                    break; // Null byte terminates
-                }
-                response_buf.push(byte[0]);
-            }
-            Err(e) => return Err(VarlinkError::Io(e.to_string())),
+        Err(keystroke_varlink::KeystrokeError::InvalidKey { message }) => {
+            eprintln!("Invalid key error: {}", message);
         }
-    }
-
-    // Parse response
-    let response: serde_json::Value =
-        serde_json::from_slice(&response_buf).map_err(|e| VarlinkError::Protocol(e.to_string()))?;
-
-    // Check for error
-    if let Some(error) = response.get("error") {
-        return Err(VarlinkError::Call(error.to_string()));
     }
 
     Ok(())
 }
-
-#[derive(Debug)]
-enum VarlinkError {
-    Connection(String),
-    Io(String),
-    Protocol(String),
-    Call(String),
-}
-
-impl std::fmt::Display for VarlinkError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            VarlinkError::Connection(s) => write!(f, "Connection error: {}", s),
-            VarlinkError::Io(s) => write!(f, "IO error: {}", s),
-            VarlinkError::Protocol(s) => write!(f, "Protocol error: {}", s),
-            VarlinkError::Call(s) => write!(f, "Call error: {}", s),
-        }
-    }
-}
-
-impl std::error::Error for VarlinkError {}

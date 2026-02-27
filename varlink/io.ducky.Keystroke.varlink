@@ -1,0 +1,14 @@
+# Keystroke Interface
+# 
+# A varlink interface for sending keystrokes and key combinations
+
+interface io.ducky.Keystroke
+
+# Send a single keystroke
+method SendKey(key: string) -> (success: bool, key: string)
+
+# Send a key combination (multiple keys held together)
+method SendKeys(keys: []string) -> (success: bool, keys: []string)
+
+# Error returned when the key parameter is invalid
+error InvalidKey(message: string)
