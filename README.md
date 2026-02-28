@@ -9,24 +9,6 @@ This project consists of two main components:
 1. **duckycap** - Capture daemon that intercepts duckyPad input using evdev exclusive grab
 2. **duckycap-varlink** - Varlink service that receives keystroke messages
 
-## Architecture
-
-```
-duckyPad (USB) → udev rule → /dev/input/duckypad symlink
-                            ↓
-                    duckycap daemon (EVIOCGRAB)
-                            ↓
-                    varlink SendKeys call
-                            ↓
-                    duckycap-varlink service
-```
-
-When the duckyPad is plugged in:
-1. udev creates `/dev/input/duckypad` symlink
-2. udev activates `duckycap.service` via `SYSTEMD_WANTS`
-3. duckycap grabs the device exclusively (blocking input from the system)
-4. On key press, duckycap sends the current key combination to the varlink service
-
 ## Varlink Interface
 
 The service exposes the `io.ducky.Keystroke` interface with two methods:
@@ -53,7 +35,8 @@ The service exposes the `io.ducky.Keystroke` interface with two methods:
 **Parameters:**
 ```json
 {
-    "keys": ["ctrl", "shift", "a"]
+    "keys": ["ctrl", "shift", "a"],
+    "pressed": true
 }
 ```
 
@@ -61,9 +44,14 @@ The service exposes the `io.ducky.Keystroke` interface with two methods:
 ```json
 {
     "success": true,
-    "keys": ["ctrl", "shift", "a"]
+    "keys": ["ctrl", "shift", "a"],
+    "pressed": true
 }
 ```
+
+The `pressed` parameter indicates:
+- `true` - key down event
+- `false` - key up event
 
 **Errors:**
 - `io.ducky.Keystroke.InvalidKey` - The key parameter is invalid or empty
@@ -96,52 +84,39 @@ This produces two binaries:
 
 ## Installation
 
-### 1. Install the binaries
+### Arch Linux (recommended)
+
+Build and install using makepkg:
 
 ```bash
-sudo cp target/release/duckycap /usr/local/bin/
-sudo cp target/release/duckycap-varlink /usr/local/bin/
+makepkg -si
 ```
 
-### 2. Install udev rule
+This will:
+- Compile the binaries
+- Install binaries to `/usr/bin/`
+- Install udev rules to `/usr/lib/udev/rules.d/`
+- Install systemd units to `/usr/lib/systemd/system/`
+- Install example config to `/etc/duckycap/config.example.toml`
 
-```bash
-sudo cp systemd/99-duckypad.rules /etc/udev/rules.d/
-sudo udevadm control --reload-rules
-sudo udevadm trigger
-```
+### Post-installation setup
 
-### 3. Install systemd units
+1. Create your configuration file:
+   ```bash
+   sudo cp /etc/duckycap/config.example.toml /etc/duckycap/config.toml
+   sudo nano /etc/duckycap/config.toml
+   ```
 
-```bash
-sudo cp systemd/duckycap.service /etc/systemd/system/
-sudo cp systemd/duckycap-varlink.socket /etc/systemd/system/
-sudo cp systemd/duckycap-varlink.service /etc/systemd/system/
-sudo systemctl daemon-reload
-```
-
-### 4. Create configuration file
-
-```bash
-# Create config directory
-sudo mkdir -p /etc/duckycap
-
-# Copy example config and edit as needed
-sudo cp config.example.toml /etc/duckycap/config.toml
-sudo nano /etc/duckycap/config.toml
-```
-
-### 5. Enable the varlink socket
-
-```bash
-sudo systemctl enable --now duckycap-varlink.socket
-```
+2. Enable the varlink socket:
+   ```bash
+   sudo systemctl enable --now duckycap-varlink.socket
+   ```
 
 The `duckycap.service` will be activated automatically by udev when the duckyPad is connected.
 
 ## Configuration
 
-The `duckycap-varlink` service uses a TOML configuration file to map key combinations to shell scripts.
+The `duckycap-varlink` service uses a TOML configuration file to map key combinations to commands.
 
 ### Configuration File Format
 
@@ -150,17 +125,30 @@ The `duckycap-varlink` service uses a TOML configuration file to map key combina
 user = "your-username"
 
 # Command mappings
+# Each mapping has:
+#   - keys: Key combination string using + to combine keys (e.g., "meta+f1", "a", "ctrl+shift+b")
+#   - cmd: Command to execute
+#     - If cmd starts with '/', it's treated as an absolute path to a script
+#     - Otherwise, it's run as a shell command
+
+# Shell command example
 [[commands]]
 keys = "a"
-path = "/home/your-username/scripts/volume-up.sh"
+cmd = "obs-cmd recording start"
 
+# Script path example (absolute path)
 [[commands]]
 keys = "b"
-path = "/home/your-username/scripts/volume-down.sh"
+cmd = "/home/your-username/scripts/volume-down.sh"
 
+# More examples
 [[commands]]
 keys = "meta+f1"
-path = "/home/your-username/scripts/toggle-mute.sh"
+cmd = "/home/your-username/scripts/toggle-mute.sh"
+
+[[commands]]
+keys = "ctrl+shift+k"
+cmd = "loginctl lock-session"
 ```
 
 ### Key Combinations
@@ -208,8 +196,8 @@ Test the varlink service directly:
 # Send a single key
 varlinkctl call /run/duckycap.varlink io.ducky.Keystroke.SendKey '{"key": "a"}'
 
-# Send a key combination
-varlinkctl call /run/duckycap.varlink io.ducky.Keystroke.SendKeys '{"keys": ["ctrl", "shift", "a"]}'
+# Send a key combination (key down)
+varlinkctl call /run/duckycap.varlink io.ducky.Keystroke.SendKeys '{"keys": ["ctrl", "shift", "a"], "pressed": true}'
 ```
 
 ### Get service info
@@ -234,13 +222,6 @@ sudo cargo run --bin duckycap-varlink -- --config config.example.toml
 
 # Terminal 2: Start capture daemon (requires root for evdev access)
 sudo cargo run --bin duckycap
-```
-
-### Debug with socat
-
-```bash
-echo '{"method":"io.ducky.Keystroke.SendKeys","parameters":{"keys":["ctrl","a"]}}' | \
-  socat - UNIX-CONNECT:/run/duckycap.varlink
 ```
 
 ## Troubleshooting
@@ -276,18 +257,6 @@ journalctl -u duckycap-varlink.service -n 50
 
 Make sure the duckycap daemon is running and has successfully grabbed the device. Check the logs for "Device grabbed exclusively" message.
 
-## Files
-
-| File | Purpose |
-|------|---------|
-| `src/bin/duckycap.rs` | Capture daemon with evdev exclusive grab |
-| `src/bin/duckycap-varlink.rs` | Varlink service implementation |
-| `config.example.toml` | Example configuration file |
-| `systemd/99-duckypad.rules` | udev rule for device identification |
-| `systemd/duckycap.service` | systemd unit for capture daemon |
-| `systemd/duckycap-varlink.socket` | systemd socket unit for varlink |
-| `systemd/duckycap-varlink.service` | systemd unit for varlink service |
-
 ## License
 
-MIT
+AGPL-3.0
