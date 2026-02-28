@@ -1,7 +1,7 @@
 # Duckycap Varlink Configuration
 #
-# Configuration file for mapping key combinations to shell scripts.
-# The service will execute scripts as the specified user when matching
+# Configuration file for mapping key combinations to commands.
+# The service will execute commands as the specified user when matching
 # key combinations are received from the duckyPad device.
 
 # User to run commands as (required)
@@ -10,20 +10,25 @@ user = "jayson"
 # Command mappings
 # Each mapping has:
 #   - keys: Key combination string using + to combine keys (e.g., "meta+f1", "a", "ctrl+shift+b")
-#   - path: Absolute path to the script to execute
+#   - cmd: Command to execute
+#     - If cmd starts with '/', it's treated as an absolute path to a script
+#     - Otherwise, it's run as a shell command
 
+# Shell command example
 [[commands]]
 keys = "a"
-path = "/home/jayson/scripts/volume-up.sh"
+cmd = "obs-cmd recording start"
 
+# Script path example (absolute path)
 [[commands]]
 keys = "b"
-path = "/home/jayson/scripts/volume-down.sh"
+cmd = "/home/jayson/scripts/volume-down.sh"
 
+# More examples
 [[commands]]
 keys = "meta+f1"
-path = "/home/jayson/scripts/toggle-mute.sh"
+cmd = "/home/jayson/scripts/toggle-mute.sh"
 
 [[commands]]
 keys = "ctrl+shift+k"
-path = "/home/jayson/scripts/lock-screen.sh"
+cmd = "loginctl lock-session"

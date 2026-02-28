@@ -53,8 +53,9 @@ struct Config {
 struct CommandMapping {
     /// Key combination string (e.g., "meta+f1", "a", "ctrl+shift+b")
     keys: String,
-    /// Absolute path to the script to execute
-    path: PathBuf,
+    /// Command to execute - if it starts with '/' it's treated as a script path,
+    /// otherwise it's run as a shell command
+    cmd: String,
 }
 
 impl Config {
@@ -68,12 +69,12 @@ impl Config {
     }
 
     /// Convert commands to a HashMap for efficient lookup
-    fn build_command_map(&self) -> HashMap<Vec<String>, PathBuf> {
+    fn build_command_map(&self) -> HashMap<Vec<String>, String> {
         self.commands
             .iter()
             .map(|cmd| {
                 let keys = parse_key_combination(&cmd.keys);
-                (keys, cmd.path.clone())
+                (keys, cmd.cmd.clone())
             })
             .collect()
     }
@@ -94,25 +95,35 @@ fn parse_key_combination(input: &str) -> Vec<String> {
 // Command Execution
 // ============================================================================
 
-/// Execute a script as a specific user with a login shell
-fn execute_as_user(user: &str, script_path: &PathBuf) -> Result<(), String> {
-    let script_str = script_path.to_string_lossy();
-
-    let status = Command::new("runuser")
-        .args([
-            "-u",
-            user,
-            "--",
-            "/bin/bash",
-            "-l", // Login shell - loads user's profile
-            "-c",
-            // Use exec "$0" pattern to safely pass script path as $0,
-            // avoiding shell interpretation of special characters in the path
-            "exec \"$0\"",
-            &script_str,
-        ])
-        .status()
-        .map_err(|e| format!("Failed to execute runuser: {e}"))?;
+/// Execute a command as a specific user with a login shell
+///
+/// If `cmd` starts with '/', it's treated as an absolute path to a script.
+/// Otherwise, it's run as a shell command via `bash -c`.
+fn execute_as_user(user: &str, cmd: &str) -> Result<(), String> {
+    let status = if cmd.starts_with('/') {
+        // Absolute path - execute script directly
+        Command::new("runuser")
+            .args([
+                "-u",
+                user,
+                "--",
+                "/bin/bash",
+                "-l", // Login shell - loads user's profile
+                "-c",
+                // Use exec "$0" pattern to safely pass script path as $0,
+                // avoiding shell interpretation of special characters in the path
+                "exec \"$0\"",
+                cmd,
+            ])
+            .status()
+            .map_err(|e| format!("Failed to execute runuser: {e}"))?
+    } else {
+        // Shell command - run via bash -c
+        Command::new("runuser")
+            .args(["-u", user, "--", "/bin/bash", "-l", "-c", cmd])
+            .status()
+            .map_err(|e| format!("Failed to execute runuser: {e}"))?
+    };
 
     if !status.success() {
         return Err(format!(
@@ -149,8 +160,8 @@ async fn main() {
     println!("Running commands as user: {}", config.user);
     println!("Loaded {} command mappings", commands.len());
 
-    for (keys, path) in &commands {
-        println!("  {} -> {}", keys.join("+"), path.display());
+    for (keys, cmd) in &commands {
+        println!("  {} -> {}", keys.join("+"), cmd);
     }
 
     run_server(config.user, commands).await;
@@ -178,7 +189,7 @@ fn get_systemd_socket() -> Option<OwnedFd> {
 }
 
 #[allow(clippy::missing_panics_doc)]
-pub async fn run_server(user: String, commands: HashMap<Vec<String>, PathBuf>) {
+pub async fn run_server(user: String, commands: HashMap<Vec<String>, String>) {
     let listener = match get_systemd_socket() {
         Some(fd) => {
             println!("Using socket from systemd (fd {})", fd.as_raw_fd());
@@ -209,7 +220,7 @@ pub async fn run_server(user: String, commands: HashMap<Vec<String>, PathBuf>) {
 
 struct KeystrokeService {
     user: String,
-    commands: HashMap<Vec<String>, PathBuf>,
+    commands: HashMap<Vec<String>, String>,
     /// Track last trigger time for each key combination (debounce)
     /// The duckyPad sends continuous press/release events, so we use
     /// time-based debouncing instead of tracking key state
@@ -217,7 +228,7 @@ struct KeystrokeService {
 }
 
 impl KeystrokeService {
-    fn new(user: String, commands: HashMap<Vec<String>, PathBuf>) -> Self {
+    fn new(user: String, commands: HashMap<Vec<String>, String>) -> Self {
         Self {
             user,
             commands,
@@ -308,26 +319,23 @@ impl KeystrokeService {
         }
 
         // Look up and execute command if found
-        if let Some(script_path) = self.commands.get(&normalized) {
+        if let Some(cmd) = self.commands.get(&normalized) {
             let user = self.user.clone();
-            let path = script_path.clone();
+            let cmd = cmd.clone();
             let key_desc = normalized.join("+");
 
-            println!("Executing '{}' as user '{}'", path.display(), user);
+            println!("Executing '{}' as user '{}'", cmd, user);
 
             // Spawn command in background to avoid blocking
             tokio::spawn(async move {
-                match execute_as_user(&user, &path) {
+                match execute_as_user(&user, &cmd) {
                     Ok(()) => println!(
                         "Command '{}' completed successfully for keys [{}]",
-                        path.display(),
-                        key_desc
+                        cmd, key_desc
                     ),
                     Err(e) => eprintln!(
                         "Command '{}' failed for keys [{}]: {}",
-                        path.display(),
-                        key_desc,
-                        e
+                        cmd, key_desc, e
                     ),
                 }
             });
