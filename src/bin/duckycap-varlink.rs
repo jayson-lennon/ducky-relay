@@ -7,6 +7,7 @@ use clap::Parser;
 use ducky_relay::{KeystrokeError, SendKeysResponse, VARLINK_SOCKET};
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -159,13 +160,38 @@ async fn main() {
 // Server
 // ============================================================================
 
+/// Check for systemd socket activation (LISTEN_FDS environment variable)
+/// Returns an OwnedFd if systemd passed us a socket
+fn get_systemd_socket() -> Option<OwnedFd> {
+    let listen_fds = std::env::var("LISTEN_FDS").ok()?;
+    let count: i32 = listen_fds.parse().ok()?;
+
+    if count >= 1 {
+        // SD_LISTEN_FDS_START is always 3 (first fd after stdin/stdout/stderr)
+        // SAFETY: systemd guarantees the fd is valid and is a Unix socket.
+        // We take ownership of the fd which will be closed when OwnedFd is dropped.
+        use std::os::unix::io::FromRawFd;
+        Some(unsafe { OwnedFd::from_raw_fd(3) })
+    } else {
+        None
+    }
+}
+
 #[allow(clippy::missing_panics_doc)]
 pub async fn run_server(user: String, commands: HashMap<Vec<String>, PathBuf>) {
-    // Clean up any existing socket file
-    let _ = tokio::fs::remove_file(VARLINK_SOCKET).await;
-
-    println!("Binding to socket: {VARLINK_SOCKET}");
-    let listener = unix::bind(VARLINK_SOCKET).expect("Failed to bind to socket");
+    let listener = match get_systemd_socket() {
+        Some(fd) => {
+            println!("Using socket from systemd (fd {})", fd.as_raw_fd());
+            // Convert OwnedFd to zlink Listener using TryFrom
+            unix::Listener::try_from(fd).expect("Failed to convert systemd socket to listener")
+        }
+        None => {
+            // Fallback: create our own socket (for development/testing)
+            println!("No systemd socket, binding directly to: {VARLINK_SOCKET}");
+            let _ = tokio::fs::remove_file(VARLINK_SOCKET).await;
+            unix::bind(VARLINK_SOCKET).expect("Failed to bind to socket")
+        }
+    };
 
     // Create our service and server
     let service = KeystrokeService::new(user, commands);

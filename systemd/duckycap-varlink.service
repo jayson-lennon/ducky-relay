@@ -4,7 +4,7 @@ Documentation=man:varlinkctl(1)
 Requires=duckycap-varlink.socket
 
 [Service]
-Type=notify
+Type=simple
 ExecStart=/usr/bin/duckycap-varlink --config /mnt/zed/work/youtube/scripts/ducky-relay.toml
 Restart=on-failure
 StandardOutput=journal
