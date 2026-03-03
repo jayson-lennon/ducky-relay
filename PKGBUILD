@@ -2,7 +2,7 @@
 
 pkgname=duckycap
 pkgver=0.3.0
-pkgrel=1
+pkgrel=3
 pkgdesc='capture duckypad input and relay it to another application'
 url=''
 license=(GPL-3.0-only)

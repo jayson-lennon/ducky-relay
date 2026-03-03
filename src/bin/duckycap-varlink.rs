@@ -2,14 +2,23 @@
 //!
 //! A varlink service that listens for keystroke messages and executes
 //! configured commands as a specific user based on a TOML config file.
+//!
+//! # Service Behavior
+//!
+//! - Uses systemd's `Type=notify` for proper service readiness signaling
+//! - Self-terminates after 5 minutes of inactivity (no keystroke messages)
+//! - Uses a monotonic clock to avoid issues with system time changes
 
 use clap::Parser;
 use ducky_relay::{KeystrokeError, SendKeysResponse, VARLINK_SOCKET};
+use sd_notify::NotifyState;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use zlink::{Server, service, unix};
 
@@ -20,6 +29,12 @@ use zlink::{Server, service, unix};
 /// Debounce duration to prevent rapid-fire command execution
 /// The duckyPad sends continuous press/release events even when key is held
 const DEBOUNCE_DURATION: Duration = Duration::from_millis(500);
+
+/// Idle timeout before self-termination (5 minutes)
+const IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+
+/// Interval for checking idle timeout
+const IDLE_CHECK_INTERVAL: Duration = Duration::from_secs(30);
 
 // ============================================================================
 // CLI Arguments
@@ -193,25 +208,55 @@ pub async fn run_server(user: String, commands: HashMap<Vec<String>, String>) {
     let listener = match get_systemd_socket() {
         Some(fd) => {
             println!("Using socket from systemd (fd {})", fd.as_raw_fd());
-            // Convert OwnedFd to zlink Listener using TryFrom
             unix::Listener::try_from(fd).expect("Failed to convert systemd socket to listener")
         }
         None => {
-            // Fallback: create our own socket (for development/testing)
             println!("No systemd socket, binding directly to: {VARLINK_SOCKET}");
             let _ = tokio::fs::remove_file(VARLINK_SOCKET).await;
             unix::bind(VARLINK_SOCKET).expect("Failed to bind to socket")
         }
     };
 
-    // Create our service and server
-    let service = KeystrokeService::new(user, commands);
+    let start_time = Arc::new(Instant::now());
+    let last_activity = Arc::new(AtomicU64::new(0));
+    
+    spawn_idle_watchdog(Arc::clone(&start_time), Arc::clone(&last_activity));
+
+    let service = KeystrokeService::new(user, commands, start_time, last_activity);
     let server = Server::new(listener, service);
+
+    notify_systemd_ready();
 
     match server.run().await {
         Ok(()) => println!("Server done."),
         Err(e) => eprintln!("Server error: {e:?}"),
     }
+}
+
+fn notify_systemd_ready() {
+    if std::env::var("NOTIFY_SOCKET").is_ok() {
+        if let Err(e) = sd_notify::notify(false, &[NotifyState::Ready]) {
+            eprintln!("Failed to notify systemd: {e}");
+        }
+    } else {
+        let _ = sd_notify::notify(false, &[NotifyState::Ready]);
+    }
+}
+
+fn spawn_idle_watchdog(start_time: Arc<Instant>, last_activity: Arc<AtomicU64>) {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(IDLE_CHECK_INTERVAL).await;
+            
+            let last_elapsed = last_activity.load(Ordering::Relaxed);
+            let current_elapsed = start_time.elapsed().as_secs();
+            
+            if current_elapsed.saturating_sub(last_elapsed) >= IDLE_TIMEOUT.as_secs() {
+                println!("No activity for {} seconds, terminating.", IDLE_TIMEOUT.as_secs());
+                std::process::exit(0);
+            }
+        }
+    });
 }
 
 // ============================================================================
@@ -225,14 +270,25 @@ struct KeystrokeService {
     /// The duckyPad sends continuous press/release events, so we use
     /// time-based debouncing instead of tracking key state
     last_triggered: HashMap<Vec<String>, Instant>,
+    /// Reference start time for monotonic clock (for idle timeout)
+    start_time: Arc<Instant>,
+    /// Shared elapsed seconds since start_time at last activity (for idle timeout)
+    last_activity: Arc<AtomicU64>,
 }
 
 impl KeystrokeService {
-    fn new(user: String, commands: HashMap<Vec<String>, String>) -> Self {
+    fn new(
+        user: String,
+        commands: HashMap<Vec<String>, String>,
+        start_time: Arc<Instant>,
+        last_activity: Arc<AtomicU64>,
+    ) -> Self {
         Self {
             user,
             commands,
             last_triggered: HashMap::new(),
+            start_time,
+            last_activity,
         }
     }
 }
@@ -245,6 +301,8 @@ impl KeystrokeService {
         keys: Vec<String>,
         pressed: bool,
     ) -> Result<SendKeysResponse, KeystrokeError> {
+        self.last_activity.store(self.start_time.elapsed().as_secs(), Ordering::Relaxed);
+
         let keys: Vec<String> = keys.into_iter().filter(|k| !k.trim().is_empty()).collect();
 
         if keys.is_empty() {
