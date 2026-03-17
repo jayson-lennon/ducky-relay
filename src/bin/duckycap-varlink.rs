@@ -112,24 +112,34 @@ fn parse_key_combination(input: &str) -> Vec<String> {
 
 /// Execute a command as a specific user with a login shell
 ///
-/// If `cmd` starts with '/', it's treated as an absolute path to a script.
+/// If `cmd` starts with '/', it's treated as an absolute path to a script,
+/// optionally followed by arguments.
 /// Otherwise, it's run as a shell command via `bash -c`.
 fn execute_as_user(user: &str, cmd: &str) -> Result<(), String> {
     let status = if cmd.starts_with('/') {
-        // Absolute path - execute script directly
-        Command::new("runuser")
-            .args([
-                "-u",
-                user,
-                "--",
-                "/bin/bash",
-                "-l", // Login shell - loads user's profile
-                "-c",
-                // Use exec "$0" pattern to safely pass script path as $0,
-                // avoiding shell interpretation of special characters in the path
-                "exec \"$0\"",
-                cmd,
-            ])
+        // Absolute path - split script path from arguments
+        let mut parts = cmd.split_whitespace();
+        let script_path = parts.next().unwrap_or(cmd);
+        let args: Vec<&str> = parts.collect();
+
+        let mut command = Command::new("runuser");
+        command.args([
+            "-u",
+            user,
+            "--",
+            "/bin/bash",
+            "-l", // Login shell - loads user's profile
+            "-c",
+            // Use exec "$0" "$@" pattern to safely pass script path as $0
+            // and forward any additional arguments via $@
+            "exec \"$0\" \"$@\"",
+            script_path,
+        ]);
+
+        // Add script arguments if any
+        command.args(&args);
+
+        command
             .status()
             .map_err(|e| format!("Failed to execute runuser: {e}"))?
     } else {
