@@ -116,11 +116,13 @@ fn parse_key_combination(input: &str) -> Vec<String> {
 /// optionally followed by arguments.
 /// Otherwise, it's run as a shell command via `bash -c`.
 fn execute_as_user(user: &str, cmd: &str) -> Result<(), String> {
-    let status = if cmd.starts_with('/') {
-        // Absolute path - split script path from arguments
-        let mut parts = cmd.split_whitespace();
-        let script_path = parts.next().unwrap_or(cmd);
-        let args: Vec<&str> = parts.collect();
+    let status = if cmd.starts_with('/' ) {
+        // Absolute path - split script path from arguments using shlex to respect quotes
+        let parts = shlex::split(cmd).ok_or("Failed to parse command: invalid quoting")?;
+        let (script_path, args): (&str, Vec<&str>) = parts
+            .split_first()
+            .map(|(p, a)| (p.as_str(), a.iter().map(String::as_str).collect()))
+            .ok_or("Empty command")?;
 
         let mut command = Command::new("runuser");
         command.args([
