@@ -17,8 +17,8 @@ use std::collections::HashMap;
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use zlink::{Server, service, unix};
 
@@ -28,7 +28,7 @@ use zlink::{Server, service, unix};
 
 /// Debounce duration to prevent rapid-fire command execution
 /// The duckyPad sends continuous press/release events even when key is held
-const DEBOUNCE_DURATION: Duration = Duration::from_millis(500);
+const DEBOUNCE_DURATION: Duration = Duration::from_millis(50);
 
 /// Idle timeout before self-termination (5 minutes)
 const IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
@@ -229,7 +229,7 @@ pub async fn run_server(user: String, commands: HashMap<Vec<String>, String>) {
 
     let start_time = Arc::new(Instant::now());
     let last_activity = Arc::new(AtomicU64::new(0));
-    
+
     spawn_idle_watchdog(Arc::clone(&start_time), Arc::clone(&last_activity));
 
     let service = KeystrokeService::new(user, commands, start_time, last_activity);
@@ -257,12 +257,15 @@ fn spawn_idle_watchdog(start_time: Arc<Instant>, last_activity: Arc<AtomicU64>) 
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(IDLE_CHECK_INTERVAL).await;
-            
+
             let last_elapsed = last_activity.load(Ordering::Relaxed);
             let current_elapsed = start_time.elapsed().as_secs();
-            
+
             if current_elapsed.saturating_sub(last_elapsed) >= IDLE_TIMEOUT.as_secs() {
-                println!("No activity for {} seconds, terminating.", IDLE_TIMEOUT.as_secs());
+                println!(
+                    "No activity for {} seconds, terminating.",
+                    IDLE_TIMEOUT.as_secs()
+                );
                 std::process::exit(0);
             }
         }
@@ -311,7 +314,8 @@ impl KeystrokeService {
         keys: Vec<String>,
         pressed: bool,
     ) -> Result<SendKeysResponse, KeystrokeError> {
-        self.last_activity.store(self.start_time.elapsed().as_secs(), Ordering::Relaxed);
+        self.last_activity
+            .store(self.start_time.elapsed().as_secs(), Ordering::Relaxed);
 
         let keys: Vec<String> = keys.into_iter().filter(|k| !k.trim().is_empty()).collect();
 
@@ -401,10 +405,7 @@ impl KeystrokeService {
                         "Command '{}' completed successfully for keys [{}]",
                         cmd, key_desc
                     ),
-                    Err(e) => eprintln!(
-                        "Command '{}' failed for keys [{}]: {}",
-                        cmd, key_desc, e
-                    ),
+                    Err(e) => eprintln!("Command '{}' failed for keys [{}]: {}", cmd, key_desc, e),
                 }
             });
         } else {
